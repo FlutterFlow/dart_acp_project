@@ -6,7 +6,7 @@ environment:
   sdk: ^3.11.0
 
 dev_dependencies:
-  analyzer: ^14.1.0
+  analyzer: ^14.4.0
   lints: ^6.1.0
   # Melos 7+ removes melos.yaml, which this Dartify workspace retains by
   # design. Keep the workspace on the latest compatible Melos 6 release.
