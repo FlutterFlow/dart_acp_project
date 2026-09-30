@@ -10,5 +10,5 @@ dev_dependencies:
   lints: ^6.1.0
   # Melos 7+ removes melos.yaml, which this Dartify workspace retains by
   # design. Keep the workspace on the latest compatible Melos 6 release.
-  melos: ^6.3.3
+  melos: ^8.9.0
   test: ^1.31.2
