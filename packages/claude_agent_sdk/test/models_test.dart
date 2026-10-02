@@ -2,6 +2,43 @@ import 'package:claude_agent_sdk/claude_agent_sdk.dart';
 import 'package:test/test.dart';
 
 void main() {
+  group('ClaudeInitializationResult', () {
+    test(
+      'reads capabilities sent as a list of names (Claude Code 2.1.287)',
+      () {
+        final result = ClaudeInitializationResult.fromJson({
+          'commands': <Object?>[],
+          'models': <Object?>[],
+          'agents': <Object?>[],
+          'capabilities': ['ui_surface_v1'],
+        });
+        expect(result.capabilities, {'ui_surface_v1': true});
+        expect(result.raw['capabilities'], ['ui_surface_v1']);
+      },
+    );
+
+    test('reads capabilities sent as an object', () {
+      final result = ClaudeInitializationResult.fromJson({
+        'capabilities': {
+          'ui_surface': {'version': 1},
+        },
+      });
+      expect(result.capabilities, {
+        'ui_surface': {'version': 1},
+      });
+    });
+
+    test('an unknown or missing capabilities shape does not fail', () {
+      expect(ClaudeInitializationResult.fromJson({}).capabilities, isEmpty);
+      expect(
+        ClaudeInitializationResult.fromJson({
+          'capabilities': 'ui_surface_v1',
+        }).capabilities,
+        isEmpty,
+      );
+    });
+  });
+
   group('JSON boundaries', () {
     test('recursively freezes maps and lists', () {
       final source = <Object?>[

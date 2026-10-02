@@ -167,11 +167,7 @@ final class ClaudeInitializationResult {
         'fast_mode_disabled_reason',
         'initialize',
       ),
-      capabilities = json['capabilities'] == null
-          ? const <String, Object?>{}
-          : immutableJsonMap(
-              asJsonMap(json['capabilities'], 'initialize.capabilities'),
-            ),
+      capabilities = _capabilities(json['capabilities']),
       raw = immutableJsonMap(json);
 
   /// Models available for this session.
@@ -199,11 +195,28 @@ final class ClaudeInitializationResult {
   final String? fastModeDisabledReason;
 
   /// Runtime capability extensions.
+  ///
+  /// Claude Code sends either an object of named extensions or, since
+  /// 2.1.287, a list of capability names (`["ui_surface_v1"]`); a listed name
+  /// reads here as `name: true`. Any other shape is left to [raw].
   final JsonMap capabilities;
 
   /// Complete forward-compatible payload.
   final JsonMap raw;
 }
+
+/// [ClaudeInitializationResult.capabilities] from either wire shape. It is an
+/// open-set advertisement, so a shape this SDK does not know must not fail
+/// the whole initialize response (and with it the session).
+JsonMap _capabilities(Object? value) => switch (value) {
+  final Map<Object?, Object?> map => immutableJsonMap(
+    asJsonMap(map, 'initialize.capabilities'),
+  ),
+  final List<Object?> names => immutableJsonMap({
+    for (final name in names.whereType<String>()) name: true,
+  }),
+  _ => const <String, Object?>{},
+};
 
 List<String> _stringList(Object? value, String context) {
   if (value == null) return const <String>[];
