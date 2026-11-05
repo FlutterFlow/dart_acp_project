@@ -11,6 +11,16 @@ Future<void> main(List<String> arguments) async {
       stderr.writeln('fake process failure');
       exitCode = 3;
       return;
+    case 'stderr':
+      // Exercises the stderr line hook: CRLF, bytes that are not UTF-8, a
+      // line past the default 2048-character cap, a blank line, and a last
+      // line with no terminator.
+      stderr
+        ..add(utf8.encode('first line\ncrlf line\r\n'))
+        ..add(<int>[0xff, 0xfe, 0x0a, 0x0a])
+        ..add(utf8.encode('${'x' * 5000}\nno newline at end'));
+      await stderr.flush();
+      return;
     case 'hang':
       await Future<void>.delayed(const Duration(days: 1));
     default:

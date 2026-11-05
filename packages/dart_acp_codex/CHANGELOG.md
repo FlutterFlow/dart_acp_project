@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+- `/mcp` lists the session's own MCP servers: `mcpServerStatus/list` now names
+  the thread, so servers declared through ACP `mcpServers` show up, and each
+  line shows the runtime status, tool count, `toolsError` and, after a failed
+  startup, Codex's error. It used to send no thread, which lists only the
+  global configuration, and read a `status` field Codex no longer sends.
+- A failed `mcpServer/startupStatus/updated` reaches the client as an agent
+  message with Codex's error text verbatim and the status in
+  `_meta.codex.mcpServerStartup`, including a failure that lands before
+  `thread/start` returns.
+- Added `CodexAdapterOptions.onMcpServerStartupStatus` and
+  `onAppServerStderr` so hosts can log every startup status and each
+  app-server stderr line. Stderr now decodes malformed UTF-8 instead of
+  raising an unhandled error.
+- Added the opt-in `CodexAdapterOptions.mcpServerStartupTimeout`, sent as
+  `startup_timeout_sec` on every server the session declares.
+
 ## 0.1.5
 
 - Added the namespaced `codexThreadTitlePromptMetaKey` hint so ACP clients that

@@ -98,16 +98,26 @@ final class _OwnedProcess {
       );
     }
     var stderrTail = '';
+    final lines = _StderrLines(
+      options.maximumStderrTailCharacters,
+      options.onAppServerStderr,
+    );
+    // Malformed bytes decode to U+FFFD instead of failing the stream: stderr
+    // is not guaranteed to be UTF-8 (a Windows console code page, a child's
+    // own output), and a decode error here had no handler at all.
     // Stored on the returned owner and cancelled during shutdown.
     // ignore: cancel_subscriptions
-    final subscription = process.stderr.transform(utf8.decoder).listen((chunk) {
-      stderrTail = (stderrTail + chunk);
-      if (stderrTail.length > options.maximumStderrTailCharacters) {
-        stderrTail = stderrTail.substring(
-          stderrTail.length - options.maximumStderrTailCharacters,
-        );
-      }
-    });
+    final subscription = process.stderr
+        .transform(const Utf8Decoder(allowMalformed: true))
+        .listen((chunk) {
+          stderrTail = (stderrTail + chunk);
+          if (stderrTail.length > options.maximumStderrTailCharacters) {
+            stderrTail = stderrTail.substring(
+              stderrTail.length - options.maximumStderrTailCharacters,
+            );
+          }
+          lines.add(chunk);
+        }, onDone: lines.close);
     unawaited(
       process.exitCode.then((code) {
         if (code != 0) {
@@ -161,6 +171,65 @@ final class _OwnedProcess {
       await process.exitCode;
     } finally {
       await _stderrSubscription.cancel();
+    }
+  }
+}
+
+/// Splits decoded stderr into lines for [CodexAdapterOptions.onAppServerStderr].
+///
+/// Bounded: a line that grows past [_maximum] characters without a newline
+/// is delivered in pieces of that size, so a peer that never ends a line
+/// cannot grow the buffer.
+final class _StderrLines {
+  _StderrLines(this._maximum, this._sink);
+
+  final int _maximum;
+  final void Function(String line)? _sink;
+  String _pending = '';
+
+  void add(String chunk) {
+    if (_sink == null) {
+      return;
+    }
+    final text = _pending + chunk;
+    var start = 0;
+    for (
+      var newline = text.indexOf('\n');
+      newline >= 0;
+      newline = text.indexOf('\n', start)
+    ) {
+      _emit(text.substring(start, newline));
+      start = newline + 1;
+    }
+    var rest = text.substring(start);
+    while (rest.length > _maximum) {
+      _emit(rest.substring(0, _maximum));
+      rest = rest.substring(_maximum);
+    }
+    _pending = rest;
+  }
+
+  void close() {
+    final rest = _pending;
+    _pending = '';
+    _emit(rest);
+  }
+
+  void _emit(String raw) {
+    final sink = _sink;
+    final line = raw.endsWith('\r') ? raw.substring(0, raw.length - 1) : raw;
+    if (sink == null || line.isEmpty) {
+      return;
+    }
+    for (var offset = 0; offset < line.length; offset += _maximum) {
+      final end = offset + _maximum < line.length
+          ? offset + _maximum
+          : line.length;
+      try {
+        sink(line.substring(offset, end));
+      } on Object {
+        // A host callback failure must not break stderr draining.
+      }
     }
   }
 }

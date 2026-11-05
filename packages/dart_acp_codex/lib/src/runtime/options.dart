@@ -4,6 +4,7 @@ import 'dart:io';
 import '../app_server/json_values.dart';
 import '../config/authentication.dart';
 import '../config/modes.dart';
+import '../session/mcp_startup.dart';
 import 'diagnostics.dart';
 
 /// The Codex app-server reviewer for eligible approval requests.
@@ -37,7 +38,10 @@ final class CodexAdapterOptions {
     this.excludeTurnsOnResume = false,
     this.mcpRevivePollInterval = const Duration(milliseconds: 300),
     this.mcpRevivePollAttempts = 30,
+    this.mcpServerStartupTimeout,
     this.onDiagnostic,
+    this.onMcpServerStartupStatus,
+    this.onAppServerStderr,
   }) : configuration = configuration ?? CodexJsonObject.empty,
        environment = UnmodifiableMapView<String, String>(
          Map<String, String>.of(environment ?? Platform.environment),
@@ -70,6 +74,12 @@ final class CodexAdapterOptions {
     if (mcpRevivePollAttempts < 0) {
       throw const CodexConfigurationException(
         'MCP revive poll attempts must not be negative.',
+      );
+    }
+    if (mcpServerStartupTimeout case final timeout?
+        when timeout <= Duration.zero) {
+      throw const CodexConfigurationException(
+        'MCP server startup timeout must be positive.',
       );
     }
   }
@@ -175,6 +185,41 @@ final class CodexAdapterOptions {
   /// revive attempts for a while).
   final int mcpRevivePollAttempts;
 
+  /// How long Codex waits for each MCP server the client declares for a
+  /// session (ACP `mcpServers`) to finish `initialize` and list its tools.
+  ///
+  /// Sent as `startup_timeout_sec` on every such server in the `thread/start`
+  /// and `thread/resume` config. Codex merges a thread's `mcp_servers` entries
+  /// key by key with config.toml, and the thread's key wins: on codex-cli
+  /// 0.160 a thread value of 5 seconds beat a config.toml value of 2, and 2
+  /// beat 5. So this replaces any `startup_timeout_sec` config.toml sets for a
+  /// server of the same name, higher or lower, while servers that only
+  /// config.toml declares keep their own. Null (the default) sends nothing,
+  /// which leaves config.toml's value or Codex's own default (30 seconds)
+  /// in charge.
+  final Duration? mcpServerStartupTimeout;
+
   /// Receives redacted diagnostics.
   final void Function(CodexDiagnostic diagnostic)? onDiagnostic;
+
+  /// Receives every `mcpServer/startupStatus/updated` notification the app
+  /// server sends, for any thread, including ones that arrive before the
+  /// session that owns the thread is installed.
+  ///
+  /// The status carries Codex's error text unredacted. A failed startup also
+  /// reaches the session's client as a visible notice, whether or not this is
+  /// set. Exceptions thrown by the callback are caught and dropped.
+  final void Function(CodexMcpServerStartupStatus status)?
+  onMcpServerStartupStatus;
+
+  /// Receives each non-empty line the owned app-server process writes to
+  /// stderr, without its `\n` or `\r\n`. A line longer than
+  /// [maximumStderrTailCharacters] arrives in pieces of at most that length.
+  /// Bytes that are not UTF-8 arrive as U+FFFD.
+  ///
+  /// Lines are passed through unredacted and may include ANSI colour codes.
+  /// Codex logs can name paths, MCP servers and request details, so redact
+  /// them before persisting. Not called for an injected backend. Exceptions
+  /// thrown by the callback are caught and dropped.
+  final void Function(String line)? onAppServerStderr;
 }

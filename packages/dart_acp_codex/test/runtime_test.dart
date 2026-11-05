@@ -125,6 +125,39 @@ void main() {
     await runtime.close();
   });
 
+  test('hands the host each stderr line, bounded and tolerant of bad '
+      'bytes', () async {
+    final lines = <String>[];
+    final runtime = await CodexRuntime.start(
+      options: CodexAdapterOptions(
+        executable: _fakeExecutable,
+        environment: <String, String>{
+          ...Platform.environment,
+          'FAKE_CODEX_MODE': 'stderr',
+        },
+        onAppServerStderr: (line) {
+          lines.add(line);
+          throw StateError('a host bug must not stop stderr draining');
+        },
+      ),
+    );
+    addTearDown(runtime.close);
+
+    expect(await runtime.exitCode, 0);
+    for (var i = 0; i < 100 && lines.length < 7; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+    expect(lines, <String>[
+      'first line',
+      'crlf line',
+      '\u{FFFD}\u{FFFD}',
+      'x' * 2048,
+      'x' * 2048,
+      'x' * 904,
+      'no newline at end',
+    ]);
+  });
+
   test('opens a thread whose history is one line over 16 MiB', () async {
     // The previous cap was the SDK's 16 MiB NDJSON default, and a real
     // month-long thread already resumes as a single 14.9 MiB line. Both ACP

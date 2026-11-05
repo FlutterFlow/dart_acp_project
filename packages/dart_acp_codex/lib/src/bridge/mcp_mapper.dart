@@ -8,7 +8,20 @@ final class CodexMcpMapper {
   const CodexMcpMapper();
 
   /// Returns a Codex `mcp_servers` configuration object.
-  Map<String, Object?> map(Iterable<McpServer> servers) {
+  ///
+  /// With [startupTimeout], every entry also carries `startup_timeout_sec`,
+  /// in seconds (Codex reads it as a float). Without it, entries carry no
+  /// timeout and Codex applies its own.
+  Map<String, Object?> map(
+    Iterable<McpServer> servers, {
+    Duration? startupTimeout,
+  }) {
+    final timeoutSeconds = switch (startupTimeout) {
+      null => null,
+      final timeout when timeout.inMicroseconds % 1000000 == 0 =>
+        timeout.inSeconds,
+      final timeout => timeout.inMicroseconds / 1000000,
+    };
     final result = <String, Object?>{};
     for (final server in servers) {
       final json = server.toJson();
@@ -28,6 +41,7 @@ final class CodexMcpMapper {
           result[name] = <String, Object?>{
             'url': json['url'],
             'http_headers': _namedValues(json['headers'], 'name', 'value'),
+            'startup_timeout_sec': ?timeoutSeconds,
           };
         case 'sse':
           throw const CodexConfigurationException(
@@ -38,6 +52,7 @@ final class CodexMcpMapper {
             'command': json['command'],
             'args': json['args'] ?? <Object?>[],
             'env': _namedValues(json['env'], 'name', 'value'),
+            'startup_timeout_sec': ?timeoutSeconds,
           };
       }
     }
