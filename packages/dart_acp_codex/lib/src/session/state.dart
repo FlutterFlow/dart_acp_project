@@ -7,6 +7,7 @@ import '../app_server/json_values.dart';
 import '../bridge/commands.dart';
 import '../config/models.dart';
 import '../config/modes.dart';
+import 'mcp_startup.dart';
 
 /// Mutable state owned by one ACP session.
 final class CodexSessionState {
@@ -76,6 +77,11 @@ final class CodexSessionState {
 
   /// Whether the fast service tier is enabled.
   bool fastMode = false;
+
+  /// The latest startup status Codex reported for each of this thread's MCP
+  /// servers, by server name, so `/mcp` can say why a server failed.
+  final Map<String, CodexMcpServerStartupStatus> mcpServerStartup =
+      <String, CodexMcpServerStartupStatus>{};
 
   /// Currently active turn.
   CodexTurnId? activeTurn;

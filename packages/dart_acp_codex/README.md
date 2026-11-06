@@ -149,6 +149,35 @@ The value goes into every workspace-write `turn/start` sandbox policy and into
 the thread's `sandbox_workspace_write.network_access` config, so the thread and
 its turns agree. Read-only turns keep the network off.
 
+## MCP server status
+
+Codex starts the MCP servers a session declares when the thread starts, and
+reports each one through `mcpServer/startupStatus/updated`. A server whose
+startup fails (it did not spawn, or did not answer `initialize` and
+`tools/list` within its startup timeout) reaches the client as an agent message
+carrying Codex's error text, with the status in
+`_meta.codex.mcpServerStartup`. `/mcp` lists the thread's servers with their
+runtime status, tool count, tool-listing error and startup error.
+
+Hosts can log every status and the app server's stderr, and give the session's
+servers more time to start than Codex's 30-second default:
+
+```dart
+CodexAdapterOptions(
+  mcpServerStartupTimeout: const Duration(seconds: 120),
+  onMcpServerStartupStatus: (status) {
+    // status.name, status.state, status.error (Codex's text, unredacted).
+  },
+  onAppServerStderr: (line) {
+    // Unredacted; redact before persisting.
+  },
+);
+```
+
+The timeout is sent as `startup_timeout_sec` on each declared server. A thread's
+value takes precedence over a config.toml `startup_timeout_sec` for a server of
+the same name.
+
 ## Providers and extensions
 
 The experimental ACP provider surface advertises one optional provider:

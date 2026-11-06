@@ -4,6 +4,7 @@ import 'package:dart_acp_sdk/dart_acp_sdk.dart';
 
 import '../app_server/backend.dart';
 import '../app_server/json_values.dart';
+import '../session/mcp_startup.dart';
 import 'tool_mapper.dart';
 
 /// Stateful mapper from current Codex app-server events to ACP session updates.
@@ -12,6 +13,38 @@ final class CodexEventMapper {
   CodexEventMapper({
     CodexToolCallMapper toolCalls = const CodexToolCallMapper(),
   }) : _toolCalls = toolCalls;
+
+  /// The session notice for an MCP server whose startup failed.
+  ///
+  /// It is an agent message, so every ACP client shows it, and its text
+  /// carries Codex's own error verbatim: that text names the cause (the
+  /// timeout, a spawn error) and, for a timeout, the `startup_timeout_sec`
+  /// setting that changes it. `_meta.codex.mcpServerStartup` holds the
+  /// status as Codex sent it, for clients that render the notice their own
+  /// way. [messageId] keeps the notice its own message rather than a
+  /// continuation of whatever text came before it.
+  static SessionUpdate mcpServerStartupNotice(
+    CodexMcpServerStartupStatus status, {
+    required String messageId,
+  }) {
+    final reason =
+        status.error ??
+        switch (status.failureReason) {
+          final reason? => 'Codex reported $reason.',
+          null => null,
+        };
+    final text = reason == null || reason.isEmpty
+        ? 'MCP server `${status.name}` failed to start.'
+        : 'MCP server `${status.name}` failed to start: $reason';
+    return SessionUpdate.fromJson(<String, Object?>{
+      'sessionUpdate': 'agent_message_chunk',
+      'content': <String, Object?>{'type': 'text', 'text': '$text\n\n'},
+      'messageId': messageId,
+      '_meta': <String, Object?>{
+        'codex': <String, Object?>{'mcpServerStartup': status.toJson()},
+      },
+    });
+  }
 
   final CodexToolCallMapper _toolCalls;
   final Set<String> _streamedReasoningItems = <String>{};

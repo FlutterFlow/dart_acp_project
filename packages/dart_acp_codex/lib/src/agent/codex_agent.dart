@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 
 import 'package:dart_acp_sdk/dart_acp_sdk.dart';
 import 'package:dart_acp_sdk/experimental/v1_unstable.dart' as unstable;
@@ -20,6 +21,7 @@ import '../config/modes.dart';
 import '../config/providers.dart';
 import '../runtime/diagnostics.dart';
 import '../runtime/options.dart';
+import '../session/mcp_startup.dart';
 import '../session/state.dart';
 import '../session/steering_queue.dart';
 import '../session/thread_title.dart';
@@ -714,6 +716,7 @@ final class CodexAgent {
         session: state,
       );
     }
+    _replayEarlyMcpServerStartup(state);
     return state;
   }
 
@@ -731,7 +734,10 @@ final class CodexAgent {
   Map<String, Object?> _sessionConfig(Iterable<McpServer> mcpServers) {
     final config = <String, Object?>{...options.configuration.toJson()};
     _setWorkspaceWriteNetworkAccess(config);
-    final mapped = _mcpMapper.map(mcpServers);
+    final mapped = _mcpMapper.map(
+      mcpServers,
+      startupTimeout: options.mcpServerStartupTimeout,
+    );
     if (mapped.isNotEmpty) {
       config['mcp_servers'] = mapped;
     }
@@ -1527,7 +1533,95 @@ final class CodexAgent {
     );
   }
 
+  /// Startup statuses for threads with no installed session yet, oldest
+  /// first. Codex starts a thread's MCP servers while it handles
+  /// `thread/start` (and `thread/resume`), so a fast failure such as a
+  /// command that cannot spawn can arrive before the response that installs
+  /// the session. Bounded: statuses for threads that never install here (a
+  /// subagent's, another client's) are evicted oldest first.
+  final ListQueue<CodexMcpServerStartupStatus> _earlyMcpServerStartup =
+      ListQueue<CodexMcpServerStartupStatus>();
+  static const int _maximumEarlyMcpServerStartup = 64;
+
+  /// Counts startup notices so each one gets its own message id.
+  int _mcpServerStartupNotices = 0;
+
+  /// Handles `mcpServer/startupStatus/updated`: the host hears every status;
+  /// the owning session records it for `/mcp` and, when startup failed, shows
+  /// Codex's error as a notice. Nothing else in the adapter surfaces a
+  /// startup failure: Codex reports it only through this notification, and
+  /// otherwise the session just has no tools from that server.
+  void _handleMcpServerStartup(CodexNotification notification) {
+    final status = CodexMcpServerStartupStatus.fromParams(notification.params);
+    if (status == null) {
+      return;
+    }
+    if (options.onMcpServerStartupStatus case final callback?) {
+      try {
+        callback(status);
+      } on Object {
+        // A host callback failure must not break the notification stream.
+      }
+    }
+    final threadId = status.threadId;
+    if (threadId == null) {
+      return;
+    }
+    final state = _sessions.byThread(CodexThreadId(threadId));
+    if (state == null) {
+      _earlyMcpServerStartup.addLast(status);
+      while (_earlyMcpServerStartup.length > _maximumEarlyMcpServerStartup) {
+        _earlyMcpServerStartup.removeFirst();
+      }
+      return;
+    }
+    if (!state.isClosed) {
+      _applyMcpServerStartup(state, status);
+    }
+  }
+
+  void _replayEarlyMcpServerStartup(CodexSessionState state) {
+    if (_earlyMcpServerStartup.isEmpty) {
+      return;
+    }
+    final id = state.sessionId.value;
+    final early = _earlyMcpServerStartup
+        .where((status) => status.threadId == id)
+        .toList();
+    _earlyMcpServerStartup.removeWhere((status) => status.threadId == id);
+    for (final status in early) {
+      _applyMcpServerStartup(state, status);
+    }
+  }
+
+  void _applyMcpServerStartup(
+    CodexSessionState state,
+    CodexMcpServerStartupStatus status,
+  ) {
+    state.mcpServerStartup[status.name] = status;
+    final client = _client;
+    if (status.state != CodexMcpServerStartupState.failed || client == null) {
+      return;
+    }
+    final update = CodexEventMapper.mcpServerStartupNotice(
+      status,
+      messageId: 'mcp-startup-${++_mcpServerStartupNotices}',
+    );
+    final generation = state.generation;
+    state.enqueueNotification(() async {
+      if (!state.isClosed && state.generation == generation) {
+        await client.updateSession(
+          SessionNotification(sessionId: state.sessionId, update: update),
+        );
+      }
+    });
+  }
+
   void _handleNotification(CodexNotification notification) {
+    if (notification.method == codexMcpServerStartupStatusMethod) {
+      _handleMcpServerStartup(notification);
+      return;
+    }
     final threadId = notification.threadId;
     if (threadId == null &&
         notification.method == 'account/rateLimits/updated') {

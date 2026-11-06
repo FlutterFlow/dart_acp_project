@@ -3,6 +3,7 @@ import 'package:dart_acp_sdk/dart_acp_sdk.dart';
 import '../app_server/backend.dart';
 import '../app_server/json_values.dart';
 import '../config/modes.dart';
+import '../session/mcp_startup.dart';
 import '../session/state.dart';
 
 /// Result of attempting to execute an ACP slash command.
@@ -96,13 +97,16 @@ final class CodexCommands {
           updates: <SessionUpdate>[_message(await _status(session))],
         );
       case 'mcp':
-        final response = await backend.request(
-          'mcpServerStatus/list',
-          params: CodexJsonObject.empty,
-        );
         return CodexCommandResult(
           handled: true,
-          updates: <SessionUpdate>[_message(_formatMcp(response))],
+          updates: <SessionUpdate>[
+            _message(
+              formatMcpServers(
+                await _listMcpServers(session),
+                startup: session.mcpServerStartup,
+              ),
+            ),
+          ],
         );
       case 'skills':
         final skills = await listSkills(<String>[
@@ -299,19 +303,99 @@ final class CodexCommands {
     }
   }
 
-  String _formatMcp(CodexJsonObject response) {
-    final data = response['data'] ?? response['servers'];
-    if (data is! List<Object?> || data.isEmpty) {
+  /// Most `mcpServerStatus/list` pages `/mcp` reads before it stops.
+  static const int maximumMcpStatusPages = 20;
+
+  /// Every MCP server [session]'s thread can see, across result pages.
+  ///
+  /// The request names the thread. Without `threadId`, app-server answers
+  /// from the global configuration alone: servers the session declared (ACP
+  /// `mcpServers`, which reach Codex through the thread's config) are
+  /// missing, and no entry carries a runtime status. On codex-cli 0.160 a
+  /// thread with one declared server listed `[]` for `{}` and that server,
+  /// `connected` with 88 tools, for `{threadId}`.
+  Future<List<Map<Object?, Object?>>> _listMcpServers(
+    CodexSessionState session,
+  ) async {
+    final servers = <Map<Object?, Object?>>[];
+    String? cursor;
+    for (var page = 0; page < maximumMcpStatusPages; page++) {
+      final response = await backend.request(
+        'mcpServerStatus/list',
+        params: CodexJsonObject.from(<String, Object?>{
+          'threadId': session.sessionId.value,
+          'cursor': ?cursor,
+        }),
+      );
+      final data = response['data'] ?? response['servers'];
+      if (data is List<Object?>) {
+        servers.addAll(data.whereType<Map<Object?, Object?>>());
+      }
+      final next = response['nextCursor'];
+      if (next is! String || next.isEmpty || next == cursor) {
+        break;
+      }
+      cursor = next;
+    }
+    return servers;
+  }
+
+  /// Renders `mcpServerStatus/list` entries for `/mcp`: each server's
+  /// runtime status (`runtimeStatus`; older app servers sent `status`), its
+  /// tool count, Codex's `toolsError`, and, from [startup], the error text of
+  /// a failed startup, verbatim.
+  static String formatMcpServers(
+    List<Map<Object?, Object?>> servers, {
+    Map<String, CodexMcpServerStartupStatus> startup =
+        const <String, CodexMcpServerStartupStatus>{},
+  }) {
+    if (servers.isEmpty) {
       return 'No MCP servers are configured.';
     }
     return <String>[
       'MCP servers:',
-      for (final raw in data)
-        if (raw is Map<Object?, Object?>)
-          '- ${raw['name'] ?? raw['serverName'] ?? 'server'}: '
-              '${raw['status'] ?? 'unknown'}',
+      for (final server in servers) ..._formatMcpServer(server, startup),
     ].join('\n');
   }
+
+  static Iterable<String> _formatMcpServer(
+    Map<Object?, Object?> server,
+    Map<String, CodexMcpServerStartupStatus> startup,
+  ) sync* {
+    final rawName = server['name'] ?? server['serverName'];
+    final name = rawName is String && rawName.isNotEmpty ? rawName : 'server';
+    final runtimeStatus = server.containsKey('runtimeStatus')
+        ? server['runtimeStatus']
+        : server['status'];
+    final toolCount = switch (server['tools']) {
+      final Map<Object?, Object?> map => map.length,
+      final List<Object?> list => list.length,
+      _ => null,
+    };
+    final tools = switch (toolCount) {
+      null => '',
+      1 => ', 1 tool',
+      final count => ', $count tools',
+    };
+    yield '- $name: ${_describeMcpStatus(runtimeStatus)}$tools';
+    if (server['toolsError'] case final String error when error.isNotEmpty) {
+      yield '  Tools error: $error';
+    }
+    if (startup[name] case final started?
+        when started.state == CodexMcpServerStartupState.failed) {
+      final reason =
+          started.error ?? started.failureReason ?? 'Codex gave no reason.';
+      yield '  Startup error: $reason';
+    }
+  }
+
+  static String _describeMcpStatus(Object? status) => switch (status) {
+    null => 'status unavailable',
+    'notStarted' => 'not started',
+    'authenticationRequired' => 'authentication required',
+    final String value when value.isNotEmpty => value,
+    _ => 'unknown',
+  };
 
   String _formatSkills(List<CodexSkill> skills) {
     return skills.isEmpty
