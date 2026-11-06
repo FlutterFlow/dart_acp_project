@@ -176,10 +176,9 @@ final class JsonRpcRequestException implements Exception {
   Object? get data => error.data;
 
   @override
-  String toString() =>
-      error.hasData && data != null
-          ? 'JsonRpcRequestException($code, $message, $data)'
-          : 'JsonRpcRequestException($code, $message)';
+  String toString() => error.hasData && data != null
+      ? 'JsonRpcRequestException($code, $message, $data)'
+      : 'JsonRpcRequestException($code, $message)';
 }
 
 /// A malformed JSON-RPC wire value.

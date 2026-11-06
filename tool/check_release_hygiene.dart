@@ -132,8 +132,12 @@ void _checkPubspec(Directory package, List<String> findings) {
   if (topLevel['name'] != 'dart_acp_sdk') {
     findings.add('pubspec package name must be `dart_acp_sdk`');
   }
-  if (topLevel['version'] != '0.1.0') {
-    findings.add('initial package version must be `0.1.0`');
+  final version = topLevel['version']?.replaceAll(
+    RegExp(r'''^['"]|['"]$'''),
+    '',
+  );
+  if (version != null && version.isNotEmpty) {
+    _checkVersion(package, version, findings);
   }
   final topics = _IndentedSection.parse(source, 'topics').items;
   if (topics.length < 3 || topics.length > 5) {
@@ -155,6 +159,37 @@ void _checkPubspec(Directory package, List<String> findings) {
     );
   }
 }
+
+/// Requires a semantic version that the newest CHANGELOG entry documents.
+void _checkVersion(Directory package, String version, List<String> findings) {
+  if (!_semanticVersion.hasMatch(version)) {
+    findings.add('pubspec version `$version` is not a semantic version');
+  }
+  final changelog = File(_join(package.path, 'CHANGELOG.md'));
+  if (!changelog.existsSync()) {
+    return;
+  }
+  final heading = const LineSplitter()
+      .convert(changelog.readAsStringSync())
+      .firstWhere((line) => line.startsWith('## '), orElse: () => '');
+  final documented = heading.isEmpty
+      ? null
+      : heading.substring(3).trim().split(RegExp(r'\s+')).first;
+  if (documented == null) {
+    findings.add('CHANGELOG.md has no `## <version>` entry');
+  } else if (documented != version) {
+    findings.add(
+      'CHANGELOG.md top entry `$documented` must match pubspec version '
+      '`$version`',
+    );
+  }
+}
+
+final RegExp _semanticVersion = RegExp(
+  r'^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)'
+  r'(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?'
+  r'(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$',
+);
 
 void _checkLogos(
   Directory repository,

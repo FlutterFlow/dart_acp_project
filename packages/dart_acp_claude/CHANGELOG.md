@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.3
+
+- Advertise and accept the `bypassPermissions` session mode when the embedding
+  client opts in with `allowDangerouslySkipPermissions`, so the ACP mode list
+  matches what the Claude Code process will allow.
+
 ## 0.1.2
 
 - Implement the shared ACP goal contract for Claude Code `/goal`, including

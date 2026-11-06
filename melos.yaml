@@ -9,8 +9,8 @@ command:
 
 scripts:
   codegen:
-    run: dart run melos exec --depends-on=build_runner -- "dart run tool/schema/generate.dart && dart run build_runner build && dart format lib/src/protocol/v1/generated lib/src/protocol/v2/generated"
-    description: Generate and format schema-derived Dart and json_serializable sources.
+    run: dart run melos exec --depends-on=build_runner -- "dart run tool/schema/generate.dart && dart run build_runner build"
+    description: Generate schema-derived Dart and json_serializable sources. Both generators format their own output.
   schema:check:
     run: dart run melos exec --file-exists=tool/schema/generate.dart -- "dart run tool/schema/generate.dart --check"
     description: Verify committed sources match the pinned offline schemas.

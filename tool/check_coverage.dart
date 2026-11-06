@@ -481,9 +481,9 @@ enum _CoverageExemptionKind {
 }
 
 final class _ExemptionResult {
-  const _ExemptionResult({this.kind, this.error});
+  const _ExemptionResult({this.kind}) : error = null;
 
-  const _ExemptionResult.error(String error) : this(error: error);
+  const _ExemptionResult.error(String this.error) : kind = null;
 
   final _CoverageExemptionKind? kind;
   final String? error;

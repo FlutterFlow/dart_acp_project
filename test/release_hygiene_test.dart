@@ -48,6 +48,61 @@ void main() {
     expect(result.stderr, contains('implementation-process language'));
     expect(result.stderr, contains('root and package logo bytes differ'));
   });
+
+  test('accepts any version that the top CHANGELOG entry documents', () async {
+    final fixture = _fixture();
+    addTearDown(() => fixture.deleteSync(recursive: true));
+    final package = _writeCompletePackage(fixture);
+    File('${package.path}/pubspec.yaml').writeAsStringSync(
+      _pubspec.replaceFirst('version: 0.1.0', 'version: 1.2.3-dev.1'),
+    );
+    File('${package.path}/CHANGELOG.md').writeAsStringSync(
+      _changelog.replaceFirst(
+        '## 0.1.0',
+        '## 1.2.3-dev.1\n\n- Next.\n\n## 0.1.0',
+      ),
+    );
+
+    final result = await Process.run(Platform.resolvedExecutable, <String>[
+      script,
+      '--root=${fixture.path}',
+    ]);
+
+    expect(result.exitCode, 0, reason: '${result.stderr}');
+  });
+
+  test('reports an undocumented or malformed version', () async {
+    final fixture = _fixture();
+    addTearDown(() => fixture.deleteSync(recursive: true));
+    final package = _writeCompletePackage(fixture);
+    final pubspec = File('${package.path}/pubspec.yaml');
+
+    pubspec.writeAsStringSync(
+      _pubspec.replaceFirst('version: 0.1.0', 'version: 0.2.0'),
+    );
+    var result = await Process.run(Platform.resolvedExecutable, <String>[
+      script,
+      '--root=${fixture.path}',
+    ]);
+    expect(result.exitCode, 1);
+    expect(
+      result.stderr,
+      contains(
+        'CHANGELOG.md top entry `0.1.0` must match pubspec version '
+        '`0.2.0`',
+      ),
+    );
+
+    pubspec.writeAsStringSync(
+      _pubspec.replaceFirst('version: 0.1.0', 'version: 0.1'),
+    );
+    result = await Process.run(Platform.resolvedExecutable, <String>[
+      script,
+      '--root=${fixture.path}',
+    ]);
+    expect(result.exitCode, 1);
+    expect(result.stderr, contains('`0.1` is not a semantic version'));
+  });
 }
 
 Directory _fixture() =>
@@ -64,6 +119,8 @@ Directory _writeCompletePackage(Directory root) {
     file.parent.createSync(recursive: true);
     if (relative == 'pubspec.yaml') {
       file.writeAsStringSync(_pubspec);
+    } else if (relative == 'CHANGELOG.md') {
+      file.writeAsStringSync(_changelog);
     } else if (relative == 'assets/logo.png') {
       file.writeAsBytesSync(logo);
     } else if (relative == 'README.md') {
@@ -135,4 +192,12 @@ dependencies:
   json_annotation: ^4.12.0
 dev_dependencies:
   test: ^1.0.0
+''';
+
+const String _changelog = '''
+# Changelog
+
+## 0.1.0
+
+- Initial release.
 ''';
