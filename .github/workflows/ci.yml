@@ -45,7 +45,11 @@ jobs:
             echo "$untracked"
             exit 1
           fi
+      # Each Dart release bundles its own `dart format`, and newer releases
+      # change the output even at this workspace's language version. Check
+      # formatting on the pinned SDK only, so a new stable release can't fail it.
       - name: Check formatting
+        if: matrix.sdk == '3.11.0'
         run: |
           dart format --output=none --set-exit-if-changed tool test
           dart run melos run format

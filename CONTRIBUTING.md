@@ -87,6 +87,10 @@ dart run melos run publish:dry-run
 Generation must leave the working tree unchanged. Tests and code generation
 must not contact upstream services.
 
+Newer Dart releases format some code differently, so CI checks formatting on
+its Dart 3.11.0 leg only. If a newer SDK reports format changes in files you
+did not touch, run the two format commands with Dart 3.11.0.
+
 ## Security
 
 Do not open a public issue for a suspected vulnerability. Follow
