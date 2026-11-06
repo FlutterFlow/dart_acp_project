@@ -156,15 +156,9 @@ void main(List<String> arguments) async {
         exitCode = buildExit;
         return;
       }
-      final int formatExit = _runDart(packageRoot, const <String>[
-        'format',
-        'lib/src/protocol/v1/generated',
-        'lib/src/protocol/v2/generated',
-      ]);
-      if (formatExit != 0) {
-        exitCode = formatExit;
-        return;
-      }
+      // No `dart format` pass here: both generators already format their
+      // output, and build_runner does so with the locked dart_style, so the
+      // generated sources come out the same on every supported SDK.
       stdout.writeln(
         'Updated schema snapshots, generated sources, and build outputs.',
       );

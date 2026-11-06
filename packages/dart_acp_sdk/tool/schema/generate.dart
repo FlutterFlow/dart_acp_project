@@ -52,7 +52,12 @@ void main(List<String> arguments) {
     conformancePlans,
   );
 
-  final Directory staging = Directory.systemTemp.createTempSync(
+  // Stage inside the package so `dart format` uses the package's language
+  // version, as it does for the committed sources. Outside a package it falls
+  // back to the running SDK's newest language version, whose style differs.
+  final dartTool = Directory('${packageRoot.path}/.dart_tool')
+    ..createSync(recursive: true);
+  final Directory staging = dartTool.createTempSync(
     'dart_acp_schema_generation_',
   );
   try {
