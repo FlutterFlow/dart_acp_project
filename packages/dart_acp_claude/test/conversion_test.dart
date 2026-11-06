@@ -553,10 +553,7 @@ void main() {
         (u) => u.discriminator == 'tool_call_update',
       );
       expect(update.toJson()['toolCallId'], 'tool');
-      expect(
-        (update.toJson()['rawInput'] as Map?)?['command'],
-        'echo hi',
-      );
+      expect((update.toJson()['rawInput'] as Map?)?['command'], 'echo hi');
 
       // The late stop adds nothing, and must not throw.
       expect(
