@@ -79,10 +79,194 @@ void main() {
       'MCP servers:\n'
       '- flutterflow_ai: connected, 88 tools\n'
       '- slow: failed, 0 tools\n'
-      '  Tools error: MCP startup failed: timed out handshaking with MCP '
-      'server after 1.99999975s\n'
-      '  Startup error: MCP client for `slow` timed out after 2 seconds.\n'
+      '  - Tools error: MCP startup failed: timed out handshaking with MCP '
+      'server after 2s\n'
+      '  - Startup error: MCP client for `slow` timed out after 2 seconds.\n'
       '- pending: status unavailable, 1 tool',
+    );
+  });
+
+  group('/mcp bound', () {
+    const bound = Duration(milliseconds: 60);
+    final options = CodexAdapterOptions(
+      environment: const <String, String>{},
+      mcpStatusTimeout: bound,
+    );
+
+    Future<void> failSlow(_Harness harness, SessionId session) async {
+      harness.backend.emit(codexMcpServerStartupStatusMethod, <String, Object?>{
+        'name': 'flutterflow_ai',
+        'status': 'failed',
+        'error': _timeoutError,
+      }, threadId: session.value);
+      harness.backend.emit(codexMcpServerStartupStatusMethod, <String, Object?>{
+        'name': 'booting',
+        'status': 'starting',
+      }, threadId: session.value);
+      await _flush();
+    }
+
+    test('a list that never answers is cut off: /mcp replies from the tracked '
+        'startup statuses and says so', () async {
+      final harness = await _connect(
+        options: options,
+        configureBackend: (backend) => backend.on(
+          'mcpServerStatus/list',
+          (params) => Completer<CodexJsonObject>().future,
+        ),
+      );
+      addTearDown(harness.close);
+      final session = await harness.newSession();
+      await failSlow(harness, session);
+
+      await harness.prompt(session, '/mcp').timeout(const Duration(seconds: 5));
+
+      expect(
+        harness.texts.last,
+        'MCP servers:\n'
+        '- flutterflow_ai: failed (startup status)\n'
+        '  - Startup error: MCP client for `flutterflow_ai` timed out after '
+        '30 seconds. Add or adjust `startup_timeout_sec` in your config.toml:\n'
+        '    [mcp_servers.flutterflow_ai]\n'
+        '    startup_timeout_sec = XX\n'
+        '- booting: starting (startup status)\n'
+        '\n'
+        'Codex did not report live MCP status within 60 ms, so this shows '
+        'the startup status seen so far.',
+      );
+    });
+
+    test('nothing tracked and no answer still replies, never throws', () async {
+      final harness = await _connect(
+        options: options,
+        configureBackend: (backend) => backend.on(
+          'mcpServerStatus/list',
+          (params) => Completer<CodexJsonObject>().future,
+        ),
+      );
+      addTearDown(harness.close);
+      final session = await harness.newSession();
+
+      await harness.prompt(session, '/mcp');
+
+      expect(
+        harness.texts.last,
+        'Codex did not report live MCP status within 60 ms, so this shows '
+        'the startup status seen so far.',
+      );
+    });
+
+    test('a list that errors falls back the same way', () async {
+      final harness = await _connect(
+        options: options,
+        configureBackend: (backend) => backend.on(
+          'mcpServerStatus/list',
+          (params) => throw StateError('app-server went away'),
+        ),
+      );
+      addTearDown(harness.close);
+      final session = await harness.newSession();
+      await failSlow(harness, session);
+
+      await harness.prompt(session, '/mcp');
+
+      expect(harness.texts.last, contains('- booting: starting'));
+      expect(
+        harness.texts.last,
+        contains('Codex could not report live MCP status (Bad state: '),
+      );
+    });
+
+    test('pages read before the deadline are kept, and the deadline is shared '
+        'across pages', () async {
+      final harness = await _connect(
+        options: options,
+        configureBackend: (backend) =>
+            backend.on('mcpServerStatus/list', (params) async {
+              if (params['cursor'] == null) {
+                return _page(<Object?>[
+                  <String, Object?>{
+                    'name': 'flutterflow_ai',
+                    'runtimeStatus': 'connected',
+                    'tools': <String, Object?>{'a': <String, Object?>{}},
+                  },
+                ], nextCursor: 'page-2');
+              }
+              return Completer<CodexJsonObject>().future;
+            }),
+      );
+      addTearDown(harness.close);
+      final session = await harness.newSession();
+      harness.backend.emit(codexMcpServerStartupStatusMethod, <String, Object?>{
+        'name': 'flutterflow_ai',
+        'status': 'ready',
+      }, threadId: session.value);
+      harness.backend.emit(codexMcpServerStartupStatusMethod, <String, Object?>{
+        'name': 'later',
+        'status': 'starting',
+      }, threadId: session.value);
+      await _flush();
+
+      await harness.prompt(session, '/mcp');
+
+      expect(
+        harness.texts.last,
+        'MCP servers:\n'
+        '- flutterflow_ai: connected, 1 tool\n'
+        '- later: starting (startup status)\n'
+        '\n'
+        'Codex did not report live MCP status within 60 ms, so this shows '
+        'the startup status seen so far.',
+      );
+    });
+
+    test('a list that answers in time has no note', () async {
+      final harness = await _connect(
+        options: options,
+        configureBackend: (backend) => backend.on(
+          'mcpServerStatus/list',
+          (params) => _page(<Object?>[
+            <String, Object?>{'name': 'ok', 'runtimeStatus': 'connected'},
+          ]),
+        ),
+      );
+      addTearDown(harness.close);
+      final session = await harness.newSession();
+
+      await harness.prompt(session, '/mcp');
+
+      expect(harness.texts.last, 'MCP servers:\n- ok: connected');
+    });
+
+    test('the bound must be positive', () {
+      expect(
+        () => CodexAdapterOptions(mcpStatusTimeout: Duration.zero),
+        throwsA(isA<CodexConfigurationException>()),
+      );
+      expect(
+        CodexAdapterOptions(
+          environment: const <String, String>{},
+        ).mcpStatusTimeout,
+        const Duration(seconds: 8),
+      );
+    });
+  });
+
+  test('durations in Codex\'s text are rounded to whole seconds, or ms under '
+      'a second', () {
+    String render(String text) =>
+        CodexCommands.formatMcpServers(<Map<Object?, Object?>>[
+          <Object?, Object?>{'name': 'a', 'toolsError': text},
+        ]);
+    expect(
+      render('after 119.999999833s and 1.99999975s, then 0.25s, 7s, 30s'),
+      'MCP servers:\n- a: status unavailable\n'
+      '  - Tools error: after 120s and 2s, then 250ms, 7s, 30s',
+    );
+    // Not durations: identifiers and unit-less words stay.
+    expect(
+      render('startup_timeout_sec 30 seconds v1.5s2 ids10s'),
+      endsWith('startup_timeout_sec 30 seconds v1.5s2 ids10s'),
     );
   });
 

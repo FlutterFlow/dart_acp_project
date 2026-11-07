@@ -39,7 +39,11 @@ final class CodexAgent {
        options = options ?? CodexAdapterOptions(),
        _promptMapper = promptMapper,
        _mcpMapper = mcpMapper,
-       _commands = CodexCommands(backend) {
+       _commands = CodexCommands(
+         backend,
+         mcpStatusTimeout:
+             options?.mcpStatusTimeout ?? CodexCommands.defaultMcpStatusTimeout,
+       ) {
     if (this.options.defaultAuthentication case CodexGatewayAuthentication(
       :final baseUrl,
       :final headers,

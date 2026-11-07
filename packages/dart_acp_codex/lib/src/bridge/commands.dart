@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:dart_acp_sdk/dart_acp_sdk.dart';
 
 import '../app_server/backend.dart';
@@ -37,10 +39,20 @@ final class CodexSkill {
 /// Parses and executes adapter-level slash commands.
 final class CodexCommands {
   /// Creates a command service.
-  const CodexCommands(this.backend);
+  const CodexCommands(
+    this.backend, {
+    this.mcpStatusTimeout = defaultMcpStatusTimeout,
+  });
+
+  /// How long `/mcp` waits for the live server list by default.
+  static const Duration defaultMcpStatusTimeout = Duration(seconds: 8);
 
   /// App-server boundary.
   final CodexBackend backend;
+
+  /// Longest `/mcp` waits for the live `mcpServerStatus/list`, all pages
+  /// together. Past it, `/mcp` answers from the tracked startup statuses.
+  final Duration mcpStatusTimeout;
 
   /// Publishes the commands available without querying the app server.
   SessionUpdate availableCommands({
@@ -97,13 +109,15 @@ final class CodexCommands {
           updates: <SessionUpdate>[_message(await _status(session))],
         );
       case 'mcp':
+        final live = await _listMcpServersBounded(session);
         return CodexCommandResult(
           handled: true,
           updates: <SessionUpdate>[
             _message(
               formatMcpServers(
-                await _listMcpServers(session),
+                live.servers,
                 startup: session.mcpServerStartup,
+                liveStatusNote: live.note,
               ),
             ),
           ],
@@ -306,7 +320,41 @@ final class CodexCommands {
   /// Most `mcpServerStatus/list` pages `/mcp` reads before it stops.
   static const int maximumMcpStatusPages = 20;
 
-  /// Every MCP server [session]'s thread can see, across result pages.
+  /// [_listMcpServers] under [mcpStatusTimeout]. Codex answers
+  /// `mcpServerStatus/list {threadId}` only after a hung server's whole
+  /// startup window (120 s or more), so `/mcp` must not wait for it. Pages
+  /// read before the deadline are kept; [_LiveMcpList.note] says why the list
+  /// may be incomplete. Never throws.
+  Future<_LiveMcpList> _listMcpServersBounded(CodexSessionState session) async {
+    final servers = <Map<Object?, Object?>>[];
+    try {
+      await _listMcpServers(session, servers).timeout(mcpStatusTimeout);
+      return _LiveMcpList(servers);
+    } on TimeoutException {
+      return _LiveMcpList(
+        servers,
+        note:
+            'Codex did not report live MCP status within '
+            '${_formatSeconds(mcpStatusTimeout)}, so this shows the startup '
+            'status seen so far.',
+      );
+    } on Object catch (error) {
+      return _LiveMcpList(
+        servers,
+        note:
+            'Codex could not report live MCP status ($error), so this shows '
+            'the startup status seen so far.',
+      );
+    }
+  }
+
+  static String _formatSeconds(Duration duration) =>
+      duration < const Duration(seconds: 1)
+      ? '${duration.inMilliseconds} ms'
+      : '${(duration.inMilliseconds / 1000).round()} s';
+
+  /// Appends every MCP server [session]'s thread can see to [servers], across
+  /// result pages.
   ///
   /// The request names the thread. Without `threadId`, app-server answers
   /// from the global configuration alone: servers the session declared (ACP
@@ -314,10 +362,10 @@ final class CodexCommands {
   /// missing, and no entry carries a runtime status. On codex-cli 0.160 a
   /// thread with one declared server listed `[]` for `{}` and that server,
   /// `connected` with 88 tools, for `{threadId}`.
-  Future<List<Map<Object?, Object?>>> _listMcpServers(
+  Future<void> _listMcpServers(
     CodexSessionState session,
+    List<Map<Object?, Object?>> servers,
   ) async {
-    final servers = <Map<Object?, Object?>>[];
     String? cursor;
     for (var page = 0; page < maximumMcpStatusPages; page++) {
       final response = await backend.request(
@@ -337,33 +385,58 @@ final class CodexCommands {
       }
       cursor = next;
     }
-    return servers;
   }
 
-  /// Renders `mcpServerStatus/list` entries for `/mcp`: each server's
-  /// runtime status (`runtimeStatus`; older app servers sent `status`), its
-  /// tool count, Codex's `toolsError`, and, from [startup], the error text of
-  /// a failed startup, verbatim.
+  /// Renders `mcpServerStatus/list` entries for `/mcp`: one bullet per
+  /// server (runtime status, `runtimeStatus`, older app servers sent `status`,
+  /// and tool count), with Codex's `toolsError` and, from [startup], the error
+  /// of a failed startup as indented sub-bullets, verbatim apart from
+  /// durations, which are rounded.
+  ///
+  /// [liveStatusNote], when set, says the live list is missing or partial;
+  /// servers only [startup] knows about are then listed from it.
   static String formatMcpServers(
     List<Map<Object?, Object?>> servers, {
     Map<String, CodexMcpServerStartupStatus> startup =
         const <String, CodexMcpServerStartupStatus>{},
+    String? liveStatusNote,
   }) {
-    if (servers.isEmpty) {
+    final lines = <String>[
+      for (final server in servers) ..._formatMcpServer(server, startup),
+    ];
+    if (liveStatusNote != null) {
+      final listed = <String>{
+        for (final server in servers) _serverName(server),
+      };
+      for (final entry in startup.entries) {
+        if (!listed.contains(entry.key)) {
+          lines.addAll(_formatStartupOnly(entry.key, entry.value));
+        }
+      }
+    }
+    if (lines.isEmpty && liveStatusNote == null) {
       return 'No MCP servers are configured.';
     }
     return <String>[
-      'MCP servers:',
-      for (final server in servers) ..._formatMcpServer(server, startup),
+      if (lines.isNotEmpty) 'MCP servers:',
+      ...lines,
+      if (liveStatusNote != null) ...<String>[
+        if (lines.isNotEmpty) '',
+        liveStatusNote,
+      ],
     ].join('\n');
+  }
+
+  static String _serverName(Map<Object?, Object?> server) {
+    final rawName = server['name'] ?? server['serverName'];
+    return rawName is String && rawName.isNotEmpty ? rawName : 'server';
   }
 
   static Iterable<String> _formatMcpServer(
     Map<Object?, Object?> server,
     Map<String, CodexMcpServerStartupStatus> startup,
   ) sync* {
-    final rawName = server['name'] ?? server['serverName'];
-    final name = rawName is String && rawName.isNotEmpty ? rawName : 'server';
+    final name = _serverName(server);
     final runtimeStatus = server.containsKey('runtimeStatus')
         ? server['runtimeStatus']
         : server['status'];
@@ -379,15 +452,56 @@ final class CodexCommands {
     };
     yield '- $name: ${_describeMcpStatus(runtimeStatus)}$tools';
     if (server['toolsError'] case final String error when error.isNotEmpty) {
-      yield '  Tools error: $error';
+      yield* _errorLines('Tools error', error);
     }
     if (startup[name] case final started?
         when started.state == CodexMcpServerStartupState.failed) {
-      final reason =
-          started.error ?? started.failureReason ?? 'Codex gave no reason.';
-      yield '  Startup error: $reason';
+      yield* _startupErrorLines(started);
     }
   }
+
+  /// A server only the startup notifications know about.
+  static Iterable<String> _formatStartupOnly(
+    String name,
+    CodexMcpServerStartupStatus started,
+  ) sync* {
+    final state = started.state == CodexMcpServerStartupState.unknown
+        ? started.rawState
+        : started.state.appServerValue;
+    yield '- $name: $state (startup status)';
+    if (started.state == CodexMcpServerStartupState.failed) {
+      yield* _startupErrorLines(started);
+    }
+  }
+
+  static Iterable<String> _startupErrorLines(
+    CodexMcpServerStartupStatus started,
+  ) => _errorLines(
+    'Startup error',
+    started.error ?? started.failureReason ?? 'Codex gave no reason.',
+  );
+
+  /// `  - label: text` with later lines of [text] indented under it.
+  static Iterable<String> _errorLines(String label, String text) {
+    final lines = _roundDurations(text).split('\n');
+    return <String>[
+      '  - $label: ${lines.first}',
+      for (final line in lines.skip(1)) '    $line',
+    ];
+  }
+
+  static final RegExp _durationPattern = RegExp(
+    r'(?<![\w.])(\d+(?:\.\d+)?)s\b',
+  );
+
+  /// Rewrites `119.999999833s` as `120s` and `0.25s` as `250ms`.
+  static String _roundDurations(String text) =>
+      text.replaceAllMapped(_durationPattern, (match) {
+        final seconds = double.parse(match[1]!);
+        return seconds < 1
+            ? '${(seconds * 1000).round()}ms'
+            : '${seconds.round()}s';
+      });
 
   static String _describeMcpStatus(Object? status) => switch (status) {
     null => 'status unavailable',
@@ -532,4 +646,12 @@ final class CodexCommands {
     },
     <String, Object?>{'name': 'logout', 'description': 'Log out of Codex.'},
   ];
+}
+
+/// The live `/mcp` list, possibly partial, and why when it is.
+final class _LiveMcpList {
+  const _LiveMcpList(this.servers, {this.note});
+
+  final List<Map<Object?, Object?>> servers;
+  final String? note;
 }
