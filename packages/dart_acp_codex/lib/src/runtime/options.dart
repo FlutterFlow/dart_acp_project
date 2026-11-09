@@ -39,6 +39,7 @@ final class CodexAdapterOptions {
     this.mcpRevivePollInterval = const Duration(milliseconds: 300),
     this.mcpRevivePollAttempts = 30,
     this.mcpServerStartupTimeout,
+    this.mcpStatusTimeout = const Duration(seconds: 8),
     this.onDiagnostic,
     this.onMcpServerStartupStatus,
     this.onAppServerStderr,
@@ -80,6 +81,11 @@ final class CodexAdapterOptions {
         when timeout <= Duration.zero) {
       throw const CodexConfigurationException(
         'MCP server startup timeout must be positive.',
+      );
+    }
+    if (mcpStatusTimeout <= Duration.zero) {
+      throw const CodexConfigurationException(
+        'MCP status timeout must be positive.',
       );
     }
   }
@@ -198,6 +204,13 @@ final class CodexAdapterOptions {
   /// which leaves config.toml's value or Codex's own default (30 seconds)
   /// in charge.
   final Duration? mcpServerStartupTimeout;
+
+  /// Longest the `/mcp` command waits for Codex's live server list, all
+  /// pages together. Codex answers `mcpServerStatus/list` for a thread only
+  /// after a hung server's whole startup window, which can be minutes. When
+  /// the bound passes, `/mcp` answers from the startup statuses already
+  /// tracked and says the live list did not answer. Defaults to 8 seconds.
+  final Duration mcpStatusTimeout;
 
   /// Receives redacted diagnostics.
   final void Function(CodexDiagnostic diagnostic)? onDiagnostic;

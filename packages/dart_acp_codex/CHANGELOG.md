@@ -17,6 +17,16 @@
   raising an unhandled error.
 - Added the opt-in `CodexAdapterOptions.mcpServerStartupTimeout`, sent as
   `startup_timeout_sec` on every server the session declares.
+- `/mcp` no longer waits out a hung MCP server. Codex answers
+  `mcpServerStatus/list` for a thread only after the server's whole startup
+  window, so `/mcp` now gives the live list (all pages together)
+  `CodexAdapterOptions.mcpStatusTimeout` (default 8 seconds). Past that, or if
+  the call fails, it answers from the startup statuses already tracked and
+  adds a line saying the live status did not answer. Pages read in time are
+  kept.
+- `/mcp` output is easier to read: one bullet per server, with the tools
+  error and startup error as indented sub-bullets, and durations in Codex's
+  text rounded (`119.999999833s` shows as `120s`, `0.25s` as `250ms`).
 
 ## 0.1.5
 
