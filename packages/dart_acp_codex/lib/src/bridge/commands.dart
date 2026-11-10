@@ -482,12 +482,27 @@ final class CodexCommands {
   );
 
   /// `  - label: text` with later lines of [text] indented under it.
+  ///
+  /// Markdown joins indented continuation lines into one paragraph, so each
+  /// line that is followed by another gets a hard line break.
   static Iterable<String> _errorLines(String label, String text) {
     final lines = _roundDurations(text).split('\n');
     return <String>[
-      '  - $label: ${lines.first}',
-      for (final line in lines.skip(1)) '    $line',
+      '  - $label: ${_hardBreak(lines, 0)}',
+      for (var i = 1; i < lines.length; i++) '    ${_hardBreak(lines, i)}',
     ];
+  }
+
+  /// `lines[index]` plus a Markdown hard break when a non-blank line follows.
+  ///
+  /// A trailing backslash is the break. When the line already ends in one, the
+  /// backslash would be taken as an escaped pair, so two spaces do it instead.
+  static String _hardBreak(List<String> lines, int index) {
+    final line = lines[index];
+    final hasNext =
+        index + 1 < lines.length && lines[index + 1].trim().isNotEmpty;
+    if (!hasNext || line.trim().isEmpty) return line;
+    return line.endsWith(r'\') ? '$line  ' : '$line\\';
   }
 
   static final RegExp _durationPattern = RegExp(
