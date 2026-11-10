@@ -92,10 +92,9 @@ packages:
   dart_acp_sdk:
     dependency: "direct main"
     description:
-      name: dart_acp_sdk
-      sha256: "086afc8e5da8b0fce598d771330b63008dea0cf75b19f98b620c7ffbc6307186"
-      url: "https://pub.dev"
-    source: hosted
+      path: "../dart_acp_sdk"
+      relative: true
+    source: path
     version: "0.1.1"
   file:
     dependency: transitive
