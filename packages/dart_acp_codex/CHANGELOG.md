@@ -17,6 +17,10 @@
   raising an unhandled error.
 - Added the opt-in `CodexAdapterOptions.mcpServerStartupTimeout`, sent as
   `startup_timeout_sec` on every server the session declares.
+- `/mcp` keeps every line of a multiline error on its own line when the text
+  is rendered as Markdown. The indented later lines used to be joined into one
+  paragraph, so Codex's startup-timeout hint ran together; each line but the
+  last now ends in a Markdown hard break.
 - `/mcp` no longer waits out a hung MCP server. Codex answers
   `mcpServerStatus/list` for a thread only after the server's whole startup
   window, so `/mcp` now gives the live list (all pages together)

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:dart_acp_codex/dart_acp_codex.dart';
 import 'package:dart_acp_codex/src/bridge/commands.dart';
 import 'package:dart_acp_codex/src/bridge/mcp_mapper.dart';
+import 'package:markdown/markdown.dart' as md;
 import 'package:test/test.dart';
 
 import 'helpers/fake_backend.dart';
@@ -126,14 +127,74 @@ void main() {
         'MCP servers:\n'
         '- flutterflow_ai: failed (startup status)\n'
         '  - Startup error: MCP client for `flutterflow_ai` timed out after '
-        '30 seconds. Add or adjust `startup_timeout_sec` in your config.toml:\n'
-        '    [mcp_servers.flutterflow_ai]\n'
+        '30 seconds. Add or adjust `startup_timeout_sec` in your config.toml:\\\n'
+        '    [mcp_servers.flutterflow_ai]\\\n'
         '    startup_timeout_sec = XX\n'
         '- booting: starting (startup status)\n'
         '\n'
         'Codex did not report live MCP status within 60 ms, so this shows '
         'the startup status seen so far.',
       );
+    });
+
+    test(
+      'the timeout error renders one line per source line as Markdown',
+      () async {
+        final harness = await _connect(
+          options: options,
+          configureBackend: (backend) => backend.on(
+            'mcpServerStatus/list',
+            (params) => Completer<CodexJsonObject>().future,
+          ),
+        );
+        addTearDown(harness.close);
+        final session = await harness.newSession();
+        await failSlow(harness, session);
+
+        await harness
+            .prompt(session, '/mcp')
+            .timeout(const Duration(seconds: 5));
+
+        for (final extensionSet in <md.ExtensionSet>[
+          md.ExtensionSet.commonMark,
+          md.ExtensionSet.gitHubFlavored,
+        ]) {
+          final html = md.markdownToHtml(
+            harness.texts.last,
+            extensionSet: extensionSet,
+          );
+          expect(
+            html,
+            contains(
+              'in your config.toml:<br />\n'
+              '[mcp_servers.flutterflow_ai]<br />\n'
+              'startup_timeout_sec = XX</li>',
+            ),
+          );
+        }
+      },
+    );
+
+    test('a line already ending in a backslash still breaks, and blank lines '
+        'and the last line get no break', () {
+      final text = CodexCommands.formatMcpServers(<Map<Object?, Object?>>[
+        <Object?, Object?>{
+          'name': 's',
+          'runtimeStatus': 'failed',
+          'toolsError': 'path C:\\dir\\\nnext\n\nlast',
+        },
+      ]);
+      expect(
+        text,
+        'MCP servers:\n'
+        '- s: failed\n'
+        '  - Tools error: path C:\\dir\\  \n'
+        '    next\n'
+        '    \n'
+        '    last',
+      );
+      final html = md.markdownToHtml(text);
+      expect(html, contains('path C:\\dir\\<br />\nnext'));
     });
 
     test('nothing tracked and no answer still replies, never throws', () async {
